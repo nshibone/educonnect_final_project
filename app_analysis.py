@@ -8,7 +8,7 @@ from sklearn.metrics import mean_absolute_error, r2_score
 
 # CONFIG
 # IMPORTANT: When deploying, this file must be in the same folder as app.py.
-DATA_PATH = "Airbnb_site_hotel new.csv"
+DATA_PATH = r"C:\Users\educa\Desktop\nisr project\educonnect final project\Airbnb_site_hotel new.csv"
 st.set_page_config(page_title="🏨 Airbnb Hotel - Upgraded Dashboard", layout="wide")
 st.title("🏨 Airbnb Hotel Analysis — Upgraded Dashboard")
 
