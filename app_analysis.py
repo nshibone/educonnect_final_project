@@ -6,34 +6,41 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 
-# --- CONFIG ---
+# CONFIG
+# IMPORTANT: When deploying, this file must be in the same folder as app.py.
+DATA_PATH = "Airbnb_site_hotel new.csv"
 st.set_page_config(page_title="🏨 Airbnb Hotel - Upgraded Dashboard", layout="wide")
 st.title("🏨 Airbnb Hotel Analysis — Upgraded Dashboard")
 
 # ---------------------------------------------------
-# DATA CLEANING FUNCTIONS
+# DATA LOADING & CLEANING
 # ---------------------------------------------------
+@st.cache_data
+def load_data(path):
+    # Added error handling for data loading
+    try:
+        return pd.read_csv(path, low_memory=False)
+    except FileNotFoundError:
+        st.error(f"Error: Data file not found at '{path}'. Please ensure 'Airbnb_site_hotel new.csv' is uploaded.")
+        st.stop()
+    except Exception as e:
+        st.error(f"An unexpected error occurred during data loading: {e}")
+        st.stop()
+
 
 def clean_price(x):
-    """Robustly cleans price/currency strings."""
     if pd.isna(x): return np.nan
     if isinstance(x, (int, float)): return x
-    s = str(x).replace("$", "").replace("USD", "").strip()
-    # Handle common thousand separators (comma or period) and decimal points
+    s = str(x).replace("$", "").replace(",", "").replace("USD", "").strip()
     try:
-        # Try US format (e.g., 1,234.56)
-        s_us = s.replace(",", "")
-        return float(s_us)
-    except ValueError:
+        return float(s)
+    except:
         try:
-            # Try European format (e.g., 1.234,56 -> 1234.56)
-            s_eu = s.replace(".", "").replace(",", ".")
-            return float(s_eu)
-        except ValueError:
+            return float(s.replace(".", "").replace(",", "."))
+        except:
             return np.nan
 
 def clean_percent(x):
-    """Cleans percentage strings."""
     if pd.isna(x): return np.nan
     s = str(x).replace("%", "").replace(",", ".").strip()
     try:
@@ -42,29 +49,15 @@ def clean_percent(x):
         return np.nan
 
 def safe_column(df, name, alt_names=[]):
-    """Finds a column based on a list of potential names."""
     for n in [name] + alt_names:
         if n in df.columns:
             return n
     return None
 
 # ---------------------------------------------------
-# FILE UPLOAD & INITIAL LOAD
+# LOAD DATA
 # ---------------------------------------------------
-
-# ⚠️ CRITICAL FIX: Replaced hardcoded path with file uploader
-uploaded_file = st.sidebar.file_uploader("📂 Upload Airbnb/Hotel Data CSV", type=["csv"])
-
-if uploaded_file is None:
-    st.info("Please upload a CSV file in the sidebar to begin the analysis.")
-    st.stop()
-
-@st.cache_data
-def load_data(file):
-    """Loads and caches data from the uploaded file."""
-    return pd.read_csv(file, low_memory=False)
-
-df = load_data(uploaded_file)
+df = load_data(DATA_PATH)
 
 # ---------------------------------------------------
 # COLUMN MAPPING (SIDEBAR)
@@ -85,7 +78,7 @@ cols = ["None"] + [str(c) for c in df.columns]
 
 # Sidebar select boxes
 def select_with_suggestion(label, suggest):
-    idx = cols.index(str(suggest)) if str(suggest) in cols else 0
+    idx = cols.index(suggest) if suggest in cols else 0
     return st.sidebar.selectbox(label, cols, index=idx)
 
 CITY_COL = select_with_suggestion("City column", suggestions["City"])
@@ -96,55 +89,41 @@ REVIEWERS_COL = select_with_suggestion("Reviewers column", suggestions["Reviewer
 HOST_RESP_COL = select_with_suggestion("Host Response Rate column", suggestions["Host Response"])
 HOST_ACCEPT_COL = select_with_suggestion("Host Acceptance Rate column", suggestions["Host Acceptance"])
 
-# Convert “None” string to Python None
+# Convert “None” to None
 def none_or_value(val): return None if val == "None" else val
-MAPPED_COLS = {
-    "CITY_COL": none_or_value(CITY_COL),
-    "AREA_COL": none_or_value(AREA_COL),
-    "PRICE_COL": none_or_value(PRICE_COL),
-    "INCOME_COL": none_or_value(INCOME_COL),
-    "REVIEWERS_COL": none_or_value(REVIEWERS_COL),
-    "HOST_RESP_COL": none_or_value(HOST_RESP_COL),
-    "HOST_ACCEPT_COL": none_or_value(HOST_ACCEPT_COL),
-}
+CITY_COL, AREA_COL, PRICE_COL, INCOME_COL, REVIEWERS_COL, HOST_RESP_COL, HOST_ACCEPT_COL = map(none_or_value, [
+    CITY_COL, AREA_COL, PRICE_COL, INCOME_COL, REVIEWERS_COL, HOST_RESP_COL, HOST_ACCEPT_COL
+])
 
 st.sidebar.markdown("### 🔎 Current mappings")
-st.sidebar.json(MAPPED_COLS)
+st.sidebar.write({
+    "City": CITY_COL,
+    "Area": AREA_COL,
+    "Price": PRICE_COL,
+    "Income": INCOME_COL,
+    "Reviewers": REVIEWERS_COL,
+    "Host Response": HOST_RESP_COL,
+    "Host Acceptance": HOST_ACCEPT_COL,
+})
 
 # ---------------------------------------------------
-# DATA CLEANING AND PRE-PROCESSING (CACHED)
+# CLEANING DATA
 # ---------------------------------------------------
-
-@st.cache_data
-def clean_and_process_data(df, cols_map):
-    """
-    Applies all cleaning and creates new features.
-    This is cached and only re-runs if the column mapping changes.
-    """
-    d = df.copy()
-    
-    # Apply cleaning functions
-    if cols_map["PRICE_COL"]: d[cols_map["PRICE_COL"]] = d[cols_map["PRICE_COL"]].apply(clean_price)
-    if cols_map["INCOME_COL"]: d[cols_map["INCOME_COL"]] = d[cols_map["INCOME_COL"]].apply(clean_price)
-    if cols_map["REVIEWERS_COL"]: d[cols_map["REVIEWERS_COL"]] = pd.to_numeric(d[cols_map["REVIEWERS_COL"]], errors="coerce")
-    if cols_map["HOST_RESP_COL"]: d[cols_map["HOST_RESP_COL"]] = d[cols_map["HOST_RESP_COL"]].apply(clean_percent)
-    if cols_map["HOST_ACCEPT_COL"]: d[cols_map["HOST_ACCEPT_COL"]] = d[cols_map["HOST_ACCEPT_COL"]].apply(clean_percent)
-    
-    return d
-
-d = clean_and_process_data(df, MAPPED_COLS)
-PRICE_COL, INCOME_COL, REVIEWERS_COL, HOST_RESP_COL, HOST_ACCEPT_COL = (
-    MAPPED_COLS["PRICE_COL"], MAPPED_COLS["INCOME_COL"], MAPPED_COLS["REVIEWERS_COL"], 
-    MAPPED_COLS["HOST_RESP_COL"], MAPPED_COLS["HOST_ACCEPT_COL"]
-)
-CITY_COL, AREA_COL = MAPPED_COLS["CITY_COL"], MAPPED_COLS["AREA_COL"]
+d = df.copy()
+if PRICE_COL: d[PRICE_COL] = d[PRICE_COL].apply(clean_price)
+if INCOME_COL: d[INCOME_COL] = d[INCOME_COL].apply(clean_price)
+if REVIEWERS_COL: d[REVIEWERS_COL] = pd.to_numeric(d[REVIEWERS_COL], errors="coerce")
+if HOST_RESP_COL: d[HOST_RESP_COL] = d[HOST_RESP_COL].apply(clean_percent)
+if HOST_ACCEPT_COL: d[HOST_ACCEPT_COL] = d[HOST_ACCEPT_COL].apply(clean_percent)
+if PRICE_COL and REVIEWERS_COL:
+    d["price_per_reviewer"] = d[PRICE_COL] / (d[REVIEWERS_COL].replace({0: np.nan}))
 
 # ---------------------------------------------------
 # FILTERS (SIDEBAR)
 # ---------------------------------------------------
 st.sidebar.header("🔍 Filters")
 
-# Area filter
+# Area filter appears first
 if AREA_COL:
     areas = sorted(d[AREA_COL].dropna().unique().tolist())
     area_options = ["All"] + areas
@@ -155,11 +134,8 @@ else:
     selected_areas = []
 
 def get_range(col_name, default_max=1000.0):
-    """Creates a range slider for a specified column."""
     if col_name and d[col_name].notna().any():
         col_min, col_max = float(d[col_name].min()), float(d[col_name].max())
-        # Prevent max == min error
-        if col_max == col_min: col_max += 1
     else:
         col_min, col_max = 0.0, default_max
     return st.sidebar.slider(f"{col_name} range" if col_name else "Range", col_min, col_max, (col_min, col_max))
@@ -175,12 +151,6 @@ if PRICE_COL:
     df_filtered = df_filtered[df_filtered[PRICE_COL].between(*price_range)]
 if INCOME_COL:
     df_filtered = df_filtered[df_filtered[INCOME_COL].between(*sales_range)]
-    
-# Skip the rest if no data remains
-if df_filtered.empty:
-    st.error("No data matches the selected filters and mappings.")
-    st.stop()
-
 
 # ---------------------------------------------------
 # MAIN TABS
@@ -196,13 +166,12 @@ tabs = st.tabs([
 with tabs[0]:
     st.header("Overview")
     col1, col2, col3, col4 = st.columns(4)
-    
     col1.metric("Listings (filtered)", len(df_filtered))
-    col2.metric("Avg Price", f"${df_filtered[PRICE_COL].mean():,.2f}" if PRICE_COL else "N/A")
-    col3.metric("Avg Sales", f"${df_filtered[INCOME_COL].mean():,.2f}" if INCOME_COL else "N/A")
-    col4.metric("Avg Reviewers", f"{df_filtered[REVIEWERS_COL].mean():.1f}" if REVIEWERS_COL else "N/A")
+    col2.metric("Avg Price", f"${df_filtered[PRICE_COL].mean():,.2f}" if PRICE_COL and df_filtered[PRICE_COL].notna().any() else "N/A")
+    col3.metric("Avg Sales", f"${df_filtered[INCOME_COL].mean():,.2f}" if INCOME_COL and df_filtered[INCOME_COL].notna().any() else "N/A")
+    col4.metric("Avg Reviewers", f"{df_filtered[REVIEWERS_COL].mean():.1f}" if REVIEWERS_COL and df_filtered[REVIEWERS_COL].notna().any() else "N/A")
 
-    if PRICE_COL:
+    if PRICE_COL and df_filtered[PRICE_COL].notna().any():
         st.markdown("### Price Distribution")
         st.altair_chart(
             alt.Chart(df_filtered).mark_bar().encode(
@@ -212,7 +181,7 @@ with tabs[0]:
             use_container_width=True
         )
 
-    if INCOME_COL:
+    if INCOME_COL and df_filtered[INCOME_COL].notna().any():
         st.markdown("### Income (Sales) Distribution")
         st.altair_chart(
             alt.Chart(df_filtered).mark_bar().encode(
@@ -240,32 +209,40 @@ with tabs[0]:
 # ---------------------------------------------------
 with tabs[1]:
     st.header("City Analysis")
-    
-    REQUIRED_CITY_COLS = [CITY_COL, PRICE_COL, INCOME_COL, REVIEWERS_COL]
-    if all(REQUIRED_CITY_COLS):
-        # NOTE: Fallback to 'size' removed, requiring all mapped columns for clarity
-        agg = df_filtered.groupby(CITY_COL).agg({
-            PRICE_COL: "mean", 
-            INCOME_COL: "sum", 
-            REVIEWERS_COL: "mean"
-        }).reset_index().rename(columns={
-            PRICE_COL: "avg_price",
-            INCOME_COL: "total_sales",
-            REVIEWERS_COL: "avg_reviewers"
-        })
+    if CITY_COL:
+        agg_cols = {}
+        if PRICE_COL: agg_cols[PRICE_COL] = "mean"
+        if INCOME_COL: agg_cols[INCOME_COL] = "sum"
+        if REVIEWERS_COL: agg_cols[REVIEWERS_COL] = "mean"
 
-        st.dataframe(agg.sort_values(by="total_sales", ascending=False).head(100))
+        # Ensure we have at least one column to aggregate beyond CITY_COL
+        if agg_cols:
+            agg = df_filtered.groupby(CITY_COL).agg(agg_cols).reset_index().rename(columns={
+                PRICE_COL: "avg_price",
+                INCOME_COL: "total_sales",
+                REVIEWERS_COL: "avg_reviewers"
+            })
 
-        st.markdown("### Bubble Chart: Avg Price vs Avg Reviewers (size = Sales)")
-        st.altair_chart(
-            alt.Chart(agg).mark_circle().encode(
-                x="avg_price", y="avg_reviewers", size="total_sales", color=CITY_COL,
-                tooltip=[CITY_COL, "avg_price", "avg_reviewers", "total_sales"]
-            ).interactive().properties(height=450),
-            use_container_width=True
-        )
-    else:
-        st.info("To view City Analysis, please map the **City**, **Price**, **Income**, and **Reviewers** columns in the sidebar.")
+            sort_by_col = "total_sales" if INCOME_COL else (
+                "avg_price" if PRICE_COL else (
+                    "avg_reviewers" if REVIEWERS_COL else CITY_COL
+                )
+            )
+
+            st.dataframe(agg.sort_values(by=sort_by_col, ascending=False).head(100))
+
+            if PRICE_COL and REVIEWERS_COL and INCOME_COL:
+                st.markdown("### Bubble Chart: Avg Price vs Avg Reviewers (size = Sales)")
+                st.altair_chart(
+                    alt.Chart(agg).mark_circle().encode(
+                        x="avg_price", y="avg_reviewers", size="total_sales", color=CITY_COL,
+                        tooltip=[CITY_COL, "avg_price", "avg_reviewers", "total_sales"]
+                    ).interactive().properties(height=450),
+                    use_container_width=True
+                )
+        else:
+            st.warning("Please select at least one numeric column (Price, Income, or Reviewers) for City Analysis.")
+
 
 # ---------------------------------------------------
 # 3. CUSTOMER INSIGHTS
@@ -285,10 +262,10 @@ with tabs[2]:
 
     if REVIEWERS_COL and INCOME_COL:
         corr = df_filtered[[REVIEWERS_COL, INCOME_COL]].dropna()
-        if not corr.empty:
+        if len(corr) > 1:
             st.info(f"Correlation (Reviewers vs Sales): **{corr[REVIEWERS_COL].corr(corr[INCOME_COL]):.3f}**")
         else:
-            st.info("Not enough non-missing data to calculate correlation.")
+            st.info("Not enough data to calculate correlation after dropping NaNs.")
 
 # ---------------------------------------------------
 # 4. HOST PERFORMANCE
@@ -320,37 +297,41 @@ with tabs[3]:
 with tabs[4]:
     st.header("Predict Sales (Income)")
     if INCOME_COL:
-        model_df = df_filtered.select_dtypes(include=[np.number]).copy()
+        # Select numeric columns that are not entirely NaN
+        model_df = df_filtered.select_dtypes(include=[np.number]).dropna(axis=1, how="all")
         
-        if INCOME_COL not in model_df.columns:
-            st.warning("Income column is not numeric after cleaning.")
+        # We need a numeric target (y) and at least one numeric feature (X)
+        if INCOME_COL not in model_df.columns or not model_df[INCOME_COL].notna().any():
+            st.warning("Income column is missing or contains no numeric data after filtering.")
         else:
-            # 🚨 FIX: Drop rows where the target (Income) is missing
-            model_df.dropna(subset=[INCOME_COL], inplace=True) 
-            
-            if model_df.shape[0] < 10:
-                st.warning("Not enough data points remaining for a robust prediction after filtering.")
-            else:
-                X = model_df.drop(columns=[INCOME_COL], errors="ignore")
-                y = model_df[INCOME_COL]
+            # Prepare X and y, dropping target from features and filling NaNs in features with 0
+            X = model_df.drop(columns=[INCOME_COL], errors="ignore").fillna(0)
+            y = model_df[INCOME_COL].fillna(model_df[INCOME_COL].median()) # Fill NaNs in target with median
+
+            # Ensure we have enough data (rows) and features (columns)
+            if X.shape[1] >= 1 and X.shape[0] >= 10: # Need at least 1 feature and 10 rows for splitting
                 
-                # 🚨 FIX: Impute features (X) with the mean of the column
-                X.fillna(X.mean(), inplace=True) 
+                # Align X and y indices after any filtering
+                common_index = X.index.intersection(y.index)
+                X = X.loc[common_index]
+                y = y.loc[common_index]
                 
-                if X.shape[1] >= 2:
-                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-                    model = RandomForestRegressor(n_estimators=120, random_state=42, n_jobs=-1)
-                    
-                    with st.spinner("Training Random Forest Regressor..."):
+                if len(common_index) >= 10:
+                    try:
+                        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+                        model = RandomForestRegressor(n_estimators=120, random_state=42, n_jobs=-1)
                         model.fit(X_train, y_train)
                         preds = model.predict(X_test)
-                        
-                    col_m1, col_m2 = st.columns(2)
-                    col_m1.metric("MAE (Mean Absolute Error)", f"{mean_absolute_error(y_test, preds):,.2f}")
-                    col_m2.metric("R² (Coefficient of Determination)", f"{r2_score(y_test, preds):.3f}")
-                    
+                        st.subheader("Random Forest Regression Results")
+                        col_m, col_r = st.columns(2)
+                        col_m.metric("MAE (Mean Absolute Error)", f"{mean_absolute_error(y_test, preds):,.2f}")
+                        col_r.metric("R² (Coefficient of Determination)", f"{r2_score(y_test, preds):.3f}")
+                    except Exception as e:
+                        st.error(f"Error during model training/prediction: {e}")
                 else:
-                    st.warning("Not enough numeric features remaining for prediction (need at least 2).")
+                    st.warning(f"Not enough clean data ({len(common_index)} rows) for prediction after cleaning.")
+            else:
+                st.warning(f"Not enough numeric features ({X.shape[1]}) or data points ({X.shape[0]}) for prediction.")
     else:
         st.warning("No income column found for prediction.")
 
@@ -360,18 +341,9 @@ with tabs[4]:
 with tabs[5]:
     st.header("Raw Data (Filtered)")
     st.write(f"Filtered rows: {len(df_filtered)}")
-    
-    # Use st.cache_data for faster CSV export
-    @st.cache_data
-    def convert_df_to_csv(df):
-        return df.to_csv(index=False).encode("utf-8")
-
-    csv = convert_df_to_csv(df_filtered)
-
     st.download_button("Download Filtered CSV",
-        csv,
-        "filtered_listings.csv",
-        "text/csv"
+        df_filtered.to_csv(index=False).encode("utf-8"),
+        "filtered_listings.csv"
     )
     st.dataframe(df_filtered.head(1000))
 
