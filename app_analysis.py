@@ -303,4 +303,3 @@ with tabs[5]:
     st.dataframe(df_filtered.head(1000))
 
 st.caption(" Educonnect Rwanda - Hotel analysis project.")
-st.image(r"C:\Users\educa\Pictures\Screenshots\Screenshot 2025-10-12 203922.png", width=180)
