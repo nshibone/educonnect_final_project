@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 
 # CONFIG
-DATA_PATH = r"C:\Users\educa\Downloads\Airbnb_site_hotel new - Copy.csv"
+DATA_PATH = r"C:\Users\educa\Desktop\nisr project\educonnect final project\Airbnb_site_hotel new.csv"
 st.set_page_config(page_title="🏨 Airbnb Hotel - Upgraded Dashboard", layout="wide")
 st.title("🏨 Airbnb Hotel Analysis — Upgraded Dashboard")
 
