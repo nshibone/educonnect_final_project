@@ -2,9 +2,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, r2_score
+
+# ---------------------------------------------------
+# OPTIONAL: Handle scikit-learn gracefully
+# ---------------------------------------------------
+try:
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import mean_absolute_error, r2_score
+except ModuleNotFoundError:
+    st.error("❌ scikit-learn is missing. Please install it with `pip install scikit-learn` or add it to your requirements.txt file.")
+    st.stop()
 
 # ---------------------------------------------------
 # CONFIGURATION
@@ -15,29 +23,23 @@ st.title("🏨 Airbnb Hotel Analysis — Upgraded Dashboard")
 # ✅ Preferred data source: GitHub raw file
 GITHUB_CSV_URL = "https://raw.githubusercontent.com/nshibone/educonnect_final_project/master/Airbnb_site_hotel%20new.csv"
 
-
 # ---------------------------------------------------
 # DATA LOADING & CLEANING
 # ---------------------------------------------------
 @st.cache_data
 def load_data():
-    """Load CSV from GitHub (preferred) or fallback to local path."""
+    """Load CSV from GitHub raw link."""
     try:
-        st.info("Loading dataset from GitHub...")
+        st.info("📂 Loading dataset from GitHub...")
         df = pd.read_csv(GITHUB_CSV_URL, low_memory=False)
         st.success("✅ Data loaded successfully from GitHub!")
         return df
     except Exception as e:
-        st.warning(f"⚠️ Could not load from GitHub: {e}. Trying local path...")
-        try:
-            df = pd.read_csv(LOCAL_PATH, low_memory=False)
-            st.success("✅ Data loaded successfully from local path.")
-            return df
-        except FileNotFoundError:
-            st.error("❌ No valid dataset found. Please ensure the CSV file exists or the GitHub link is accessible.")
-            st.stop()
+        st.error(f"❌ Failed to load dataset: {e}")
+        return pd.DataFrame()
 
 def clean_price(x):
+    """Convert strings like '$1,200' or '1.200,50' to float."""
     if pd.isna(x): return np.nan
     if isinstance(x, (int, float)): return x
     s = str(x).replace("$", "").replace(",", "").replace("USD", "").strip()
@@ -50,6 +52,7 @@ def clean_price(x):
             return np.nan
 
 def clean_percent(x):
+    """Convert percentage strings like '90%' to float."""
     if pd.isna(x): return np.nan
     s = str(x).replace("%", "").replace(",", ".").strip()
     try:
@@ -67,17 +70,19 @@ def safe_column(df, name, alt_names=[]):
 # LOAD DATA
 # ---------------------------------------------------
 df = load_data()
+if df.empty:
+    st.stop()
 
 # ---------------------------------------------------
 # SIDEBAR COLUMN MAPPING
 # ---------------------------------------------------
-st.sidebar.header("Map Dataset Columns")
+st.sidebar.header("🧭 Map Dataset Columns")
 
 suggestions = {
     "City": safe_column(df, "city", ["City", "location", "neighbourhood"]),
-    "Area": safe_column(df, "area", ["area", "neighbourhood", "neighborhood", "district", "zone"]),
+    "Area": safe_column(df, "area", ["area", "district", "zone"]),
     "Price": safe_column(df, "price", ["Price", "price_usd", "daily_price"]),
-    "Income": safe_column(df, "sales", ["revenue", "income", "earnings"]),
+    "Income": safe_column(df, "sales", ["revenue", "income"]),
     "Reviewers": safe_column(df, "total reviewers number", ["review_count", "number_of_reviews"]),
     "Host Response": safe_column(df, "host response rate", ["host_response_rate"]),
     "Host Acceptance": safe_column(df, "host acceptance rate", ["host_acceptance_rate"])
@@ -102,19 +107,8 @@ CITY_COL, AREA_COL, PRICE_COL, INCOME_COL, REVIEWERS_COL, HOST_RESP_COL, HOST_AC
     none_or_value, [CITY_COL, AREA_COL, PRICE_COL, INCOME_COL, REVIEWERS_COL, HOST_RESP_COL, HOST_ACCEPT_COL]
 )
 
-st.sidebar.markdown("### 🔎 Current mappings")
-st.sidebar.write({
-    "City": CITY_COL,
-    "Area": AREA_COL,
-    "Price": PRICE_COL,
-    "Income": INCOME_COL,
-    "Reviewers": REVIEWERS_COL,
-    "Host Response": HOST_RESP_COL,
-    "Host Acceptance": HOST_ACCEPT_COL,
-})
-
 # ---------------------------------------------------
-# DATA CLEANING
+# CLEAN DATA
 # ---------------------------------------------------
 d = df.copy()
 if PRICE_COL: d[PRICE_COL] = d[PRICE_COL].apply(clean_price)
@@ -123,7 +117,7 @@ if REVIEWERS_COL: d[REVIEWERS_COL] = pd.to_numeric(d[REVIEWERS_COL], errors="coe
 if HOST_RESP_COL: d[HOST_RESP_COL] = d[HOST_RESP_COL].apply(clean_percent)
 if HOST_ACCEPT_COL: d[HOST_ACCEPT_COL] = d[HOST_ACCEPT_COL].apply(clean_percent)
 if PRICE_COL and REVIEWERS_COL:
-    d["price_per_reviewer"] = d[PRICE_COL] / (d[REVIEWERS_COL].replace({0: np.nan}))
+    d["price_per_reviewer"] = d[PRICE_COL] / d[REVIEWERS_COL].replace({0: np.nan})
 
 # ---------------------------------------------------
 # SIDEBAR FILTERS
@@ -161,10 +155,7 @@ if INCOME_COL:
 # ---------------------------------------------------
 # MAIN TABS
 # ---------------------------------------------------
-tabs = st.tabs([
-    "Overview", "City Analysis", "Customer Insights",
-    "Host Performance", "Prediction", "Raw Data"
-])
+tabs = st.tabs(["Overview", "City Analysis", "Customer Insights", "Host Performance", "Prediction", "Raw Data"])
 
 # ---------------------------------------------------
 # 1. OVERVIEW
@@ -178,7 +169,7 @@ with tabs[0]:
     col4.metric("Avg Reviewers", f"{df_filtered[REVIEWERS_COL].mean():.1f}" if REVIEWERS_COL else "N/A")
 
     if PRICE_COL:
-        st.markdown("### Price Distribution")
+        st.subheader("Price Distribution")
         st.altair_chart(
             alt.Chart(df_filtered).mark_bar().encode(
                 alt.X(PRICE_COL, bin=alt.Bin(maxbins=60), title="Price"),
@@ -187,111 +178,8 @@ with tabs[0]:
             use_container_width=True
         )
 
-    if INCOME_COL:
-        st.markdown("### Income (Sales) Distribution")
-        st.altair_chart(
-            alt.Chart(df_filtered).mark_bar().encode(
-                alt.X(INCOME_COL, bin=alt.Bin(maxbins=60), title="Sales"),
-                y="count()"
-            ).properties(height=300),
-            use_container_width=True
-        )
-
-    if CITY_COL:
-        st.markdown("### Listings per City (Top 25)")
-        city_counts = df_filtered[CITY_COL].value_counts().head(25).reset_index()
-        city_counts.columns = ["City", "Listing_Count"]
-        st.altair_chart(
-            alt.Chart(city_counts).mark_bar().encode(
-                x=alt.X("City", sort='-y'),
-                y="Listing_Count",
-                tooltip=["City", "Listing_Count"]
-            ).properties(height=300),
-            use_container_width=True
-        )
-
 # ---------------------------------------------------
-# 2. CITY ANALYSIS
-# ---------------------------------------------------
-with tabs[1]:
-    st.header("City Analysis")
-    if CITY_COL:
-        agg_cols = {}
-        if PRICE_COL: agg_cols[PRICE_COL] = "mean"
-        if INCOME_COL: agg_cols[INCOME_COL] = "sum"
-        if REVIEWERS_COL: agg_cols[REVIEWERS_COL] = "mean"
-
-        if agg_cols:
-            agg = df_filtered.groupby(CITY_COL).agg(agg_cols).reset_index().rename(columns={
-                PRICE_COL: "avg_price",
-                INCOME_COL: "total_sales",
-                REVIEWERS_COL: "avg_reviewers"
-            })
-
-            sort_by_col = "total_sales" if INCOME_COL else "avg_price"
-            st.dataframe(agg.sort_values(by=sort_by_col, ascending=False).head(100))
-
-            if PRICE_COL and REVIEWERS_COL and INCOME_COL:
-                st.markdown("### Bubble Chart: Avg Price vs Avg Reviewers (size = Sales)")
-                st.altair_chart(
-                    alt.Chart(agg).mark_circle().encode(
-                        x="avg_price", y="avg_reviewers", size="total_sales", color=CITY_COL,
-                        tooltip=[CITY_COL, "avg_price", "avg_reviewers", "total_sales"]
-                    ).interactive().properties(height=450),
-                    use_container_width=True
-                )
-        else:
-            st.warning("Please select numeric columns for City Analysis.")
-
-# ---------------------------------------------------
-# 3. CUSTOMER INSIGHTS
-# ---------------------------------------------------
-with tabs[2]:
-    st.header("Customer Insights")
-    if PRICE_COL and REVIEWERS_COL:
-        st.markdown("### Price vs Reviewers vs Sales")
-        st.altair_chart(
-            alt.Chart(df_filtered).mark_circle().encode(
-                x=PRICE_COL, y=REVIEWERS_COL,
-                size=INCOME_COL if INCOME_COL else alt.value(40),
-                tooltip=[CITY_COL or "index", PRICE_COL, REVIEWERS_COL, INCOME_COL or ""]
-            ).interactive().properties(height=450),
-            use_container_width=True
-        )
-
-    if REVIEWERS_COL and INCOME_COL:
-        corr = df_filtered[[REVIEWERS_COL, INCOME_COL]].dropna()
-        if len(corr) > 1:
-            st.info(f"Correlation (Reviewers vs Sales): **{corr[REVIEWERS_COL].corr(corr[INCOME_COL]):.3f}**")
-        else:
-            st.info("Not enough data to calculate correlation after dropping NaNs.")
-
-# ---------------------------------------------------
-# 4. HOST PERFORMANCE
-# ---------------------------------------------------
-with tabs[3]:
-    st.header("Host Performance")
-    if HOST_RESP_COL:
-        st.subheader("Host Response Rate")
-        st.altair_chart(
-            alt.Chart(df_filtered).mark_bar().encode(
-                alt.X(HOST_RESP_COL, bin=alt.Bin(maxbins=30), title="Response Rate (%)"),
-                y="count()"
-            ).properties(height=300),
-            use_container_width=True
-        )
-    if HOST_ACCEPT_COL:
-        st.subheader("Host Acceptance Rate")
-        st.altair_chart(
-            alt.Chart(df_filtered).mark_bar().encode(
-                alt.X(HOST_ACCEPT_COL, bin=alt.Bin(maxbins=30), title="Acceptance Rate (%)"),
-                y="count()"
-            ).properties(height=300),
-            use_container_width=True
-        )
-
-# ---------------------------------------------------
-# 5. PREDICTION
+# 5. PREDICTION (Random Forest)
 # ---------------------------------------------------
 with tabs[4]:
     st.header("Predict Sales (Income)")
@@ -324,10 +212,10 @@ with tabs[5]:
     st.header("Raw Data (Filtered)")
     st.write(f"Filtered rows: {len(df_filtered)}")
     st.download_button(
-        "Download Filtered CSV",
+        "📥 Download Filtered CSV",
         df_filtered.to_csv(index=False).encode("utf-8"),
         "filtered_listings.csv"
     )
     st.dataframe(df_filtered.head(1000))
 
-st.caption(" Educonnect Rwanda - Hotel analysis project.")
+st.caption("📊 Educonnect Rwanda - Hotel analysis project.")
